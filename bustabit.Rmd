@@ -1,0 +1,140 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r}
+# Load the relevant package
+library(tidyverse)
+library(stats)
+library(GGally)
+
+# Load the data
+bustabit <- read.csv("bustabit.csv")
+
+# Find the highest multiplier (BustedAt value) achieved in a game
+bustabit %>%
+  arrange(desc(BustedAt)) %>%
+  slice(1)
+```
+
+2. Deriving relevant features for clustering
+```{r}
+# Create the new feature variables
+bustabit_features <- bustabit %>%
+  mutate(CashedOut = ifelse(is.na(CashedOut), BustedAt + 0.01, CashedOut),
+         Profit = ifelse(is.na(Profit), 0, Profit),
+         Losses = ifelse(Profit==0, -1*Bet, 0),
+         GameWon = ifelse(Profit==0, 0, 1),
+         GameLost = ifelse(Profit==0, 1, 0))
+
+# Look at the first five rows if the feature data
+head(bustabit_features, 5)
+```
+
+3. Creating per-player statistics
+```{r}
+# Group by players to create per-player summary statistics
+bustabit_clus <- bustabit_features %>%
+  group_by(Username) %>%
+  summarize(AverageCashedOut = mean(CashedOut), 
+            AverageBet = mean(Bet),
+            TotalProfit = sum(Profit),
+            TotalLosses = sum(Losses), 
+            GamesWon = sum(GameWon),
+            GamesLost = sum(GameLost))
+
+# View the first five rows of the data
+head(bustabit_clus, n = 5)
+```
+
+4. Scaling and normalization of the derived features
+```{r}
+# Create the mean-sd standardization function
+mean_sd_standard <- function(x) {
+  (x-mean(x)) / sd(x)
+}
+
+# Apply the function to each numeric variables in the clustering
+bustabit_standardized <- bustabit_clus %>%
+  mutate_if(is.numeric, mean_sd_standard)
+
+# Summarize our standardized data
+summary(bustabit_standardized)
+```
+
+5. Cluster the player data using K means
+```{r}
+# Set the seed
+set.seed(100)
+
+# Cluster the players using kmeans with five clusters
+cluster_solution <- kmeans(bustabit_standardized[,-1], centers = 5)
+
+# Store the cluster assignments back into the clustering data frame object
+bustabit_clus$cluster <- factor(cluster_solution$cluster)
+
+# Look at the distribution of cluster assignments
+table(bustabit_clus$cluster)
+```
+
+6. Compute averages for each cluster
+```{r}
+# Group by the cluster assignment and calculate averages
+bustabit_clus_avg <- bustabit_clus %>%
+  group_by(cluster) %>%
+  summarize_if(is.numeric, mean)
+
+# View the resulting table
+bustabit_clus_avg
+```
+
+7. Visualize the clusters with a Parallel Coordinate Plot
+```{r}
+# Create the min-max scaling function
+min_max_standard <- function(x) {
+  (x-min(x)) / (max(x) - min(x))
+}
+
+# Apply this function to each numeric variable in the bustabit_clus_avg object
+bustabit_avg_minmax <- bustabit_clus_avg %>%
+  mutate_if(is.numeric, min_max_standard)
+
+# Create a parallel coordinate plot of the values
+ggparcoord(bustabit_avg_minmax, columns = 2:ncol(bustabit_avg_minmax),
+           groupColumn = "cluster", scale = "globalminmax", order = "skewness")
+```
+
+8. Visualize the clusters with Principal Components
+```{r}
+# Calculate the principal components of the standardized data
+my_pc <- as.data.frame(prcomp(bustabit_standardized[,-1])$x)
+
+# Store the cluster assignments in the new data frame
+my_pc$cluster <- bustabit_clus$cluster
+
+# Use the ggplot() to plot PC2 vs PC1, and color by the cluster assignment
+p1 <- ggplot(data = my_pc, aes(x = PC1, y = PC2, color = cluster)) + geom_point()
+
+p1
+```
+
+9. Analyzing the groups of gamblers our solution uncovered
+```{r}
+# Assign cluster names to clusters 1 through 5 in order
+cluster_names <- c(
+    "Risky Commoners",
+    "High Rollers",
+    "Risk Takers",
+    "Cautious Commoners",
+    "Strategic Addicts"
+)
+
+# Append the cluster names to the cluster means table
+bustabit_clus_avg_names <- bustabit_clus_avg %>%
+  cbind(Name = cluster_names)
+
+# View the cluster means table with your appended cluster names
+bustabit_clus_avg_names
+```
+
